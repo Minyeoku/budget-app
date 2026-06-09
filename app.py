@@ -24,23 +24,33 @@ CAT_COLORS = {
     "기타지출": "#845ef7",
 }
 
-EMPTY_DF = pd.DataFrame(columns=["날짜", "유형", "카테고리", "금액", "메모"])
+def _make_empty_df():
+    df = pd.DataFrame(columns=["날짜", "유형", "카테고리", "금액", "메모"])
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["금액"] = df["금액"].astype("Int64")
+    return df
+
+def _fix_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df["금액"] = pd.to_numeric(df["금액"], errors="coerce").fillna(0).astype(int)
+    return df
 
 # ── 데이터: session_state 기반 (Streamlit Cloud 호환) + 로컬 CSV 병행 ──
 def _init_state():
     if "budget_df" not in st.session_state:
         if os.path.exists(DATA_FILE):
-            df = pd.read_csv(DATA_FILE, parse_dates=["날짜"])
-            df["날짜"] = pd.to_datetime(df["날짜"])
-            df["금액"] = pd.to_numeric(df["금액"], errors="coerce").fillna(0).astype(int)
+            df = _fix_dtypes(pd.read_csv(DATA_FILE))
         else:
-            df = EMPTY_DF.copy()
+            df = _make_empty_df()
         st.session_state.budget_df = df
 
 _init_state()
 
 def load_data() -> pd.DataFrame:
-    return st.session_state.budget_df.copy()
+    df = st.session_state.budget_df.copy()
+    if not df.empty:
+        df = _fix_dtypes(df)
+    return df
 
 def save_data(df: pd.DataFrame):
     st.session_state.budget_df = df.reset_index(drop=True)
@@ -53,18 +63,16 @@ def add_row(날짜, 유형, 카테고리, 금액, 메모):
     df = load_data()
     new_row = pd.DataFrame([{"날짜": pd.Timestamp(날짜), "유형": 유형,
                               "카테고리": 카테고리, "금액": int(금액), "메모": 메모}])
-    df = pd.concat([df, new_row], ignore_index=True).sort_values("날짜")
+    df = _fix_dtypes(pd.concat([df, new_row], ignore_index=True).sort_values("날짜"))
     save_data(df)
 
 def delete_row(idx):
     df = load_data()
-    df = df.drop(index=idx)
+    df = _fix_dtypes(df.drop(index=idx))
     save_data(df)
 
 def upload_csv(uploaded_file):
-    df = pd.read_csv(uploaded_file, parse_dates=["날짜"])
-    df["날짜"] = pd.to_datetime(df["날짜"])
-    df["금액"] = pd.to_numeric(df["금액"], errors="coerce").fillna(0).astype(int)
+    df = _fix_dtypes(pd.read_csv(uploaded_file))
     save_data(df)
 
 def fmt(n):
