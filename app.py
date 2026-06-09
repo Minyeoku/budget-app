@@ -202,45 +202,64 @@ with tab1:
 
 # ── 탭2: 카테고리 분석 ─────────────────────────────────────────────
 with tab2:
-    col_in, col_out = st.columns(2)
 
     def pie_chart(df_sub, title):
         if df_sub.empty:
-            return go.Figure().update_layout(title=title, height=380)
+            fig = go.Figure()
+            fig.update_layout(title=title, height=360,
+                              annotations=[dict(text="데이터 없음", showarrow=False,
+                                                font=dict(size=14, color="#adb5bd"))])
+            return fig
         grp = df_sub.groupby("카테고리")["금액"].sum().reset_index()
         grp = grp[grp["금액"] > 0].sort_values("금액", ascending=False)
         fig = px.pie(grp, values="금액", names="카테고리", title=title,
-                     height=380, color="카테고리",
-                     color_discrete_map=CAT_COLORS, hole=0.35)
-        fig.update_traces(textinfo="label+percent", textfont_size=12,
+                     height=360, color="카테고리",
+                     color_discrete_map=CAT_COLORS, hole=0.38)
+        fig.update_traces(textinfo="label+percent", textfont_size=11,
                           pull=[0.03]*len(grp))
-        fig.update_layout(showlegend=False)
+        fig.update_layout(showlegend=True,
+                          legend=dict(orientation="v", x=1.02, y=0.5))
         return fig
 
-    df_in_view  = df_view[df_view["유형"] == "수입"]
-    df_out_view = df_view[df_view["유형"] == "지출"]
+    def cat_table(df_sub):
+        if df_sub.empty:
+            return
+        st.dataframe(
+            df_sub.groupby("카테고리")["금액"].sum()
+            .sort_values(ascending=False).reset_index()
+            .rename(columns={"금액": "금액 (원)"}),
+            hide_index=True, use_container_width=True,
+        )
 
-    with col_in:
-        st.plotly_chart(pie_chart(df_in_view, f"💚 수입 카테고리 ({period})"),
-                        use_container_width=True)
-        if not df_in_view.empty:
-            st.dataframe(
-                df_in_view.groupby("카테고리")["금액"].sum()
-                .sort_values(ascending=False).reset_index()
-                .rename(columns={"금액": "금액 (원)"}),
-                hide_index=True, use_container_width=True,
-            )
+    def render_cat_section(df_filtered, label):
+        col_in, col_out = st.columns(2)
+        df_in  = df_filtered[df_filtered["유형"] == "수입"]
+        df_out = df_filtered[df_filtered["유형"] == "지출"]
+        with col_in:
+            st.plotly_chart(pie_chart(df_in,  f"💚 수입 카테고리 ({label})"),
+                            use_container_width=True)
+            cat_table(df_in)
+        with col_out:
+            st.plotly_chart(pie_chart(df_out, f"❤️ 지출 카테고리 ({label})"),
+                            use_container_width=True)
+            cat_table(df_out)
 
-    with col_out:
-        st.plotly_chart(pie_chart(df_out_view, f"❤️ 지출 카테고리 ({period})"),
-                        use_container_width=True)
-        if not df_out_view.empty:
-            st.dataframe(
-                df_out_view.groupby("카테고리")["금액"].sum()
-                .sort_values(ascending=False).reset_index()
-                .rename(columns={"금액": "금액 (원)"}),
-                hide_index=True, use_container_width=True,
-            )
+    # 데이터 있는 월 목록
+    df_year = df[df["날짜"].dt.year == sel_year]
+    avail_months = sorted(df_year["날짜"].dt.month.unique())
+
+    sub_tabs_labels = [f"{sel_year}년 전체"] + [f"{m}월" for m in avail_months]
+    sub_tabs = st.tabs(sub_tabs_labels)
+
+    # 연간 전체 탭
+    with sub_tabs[0]:
+        render_cat_section(df_year, f"{sel_year}년 전체")
+
+    # 월별 탭
+    for i, m in enumerate(avail_months):
+        with sub_tabs[i + 1]:
+            df_m = df_year[df_year["날짜"].dt.month == m]
+            render_cat_section(df_m, f"{sel_year}년 {m}월")
 
 # ── 탭3: 내역 목록 ──────────────────────────────────────────────────
 with tab3:
