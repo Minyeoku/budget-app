@@ -31,11 +31,21 @@ def get_client():
 supabase = get_client()
 
 # ── DB CRUD ────────────────────────────────────────────────────────
+def _empty_df():
+    return pd.DataFrame({
+        "id": pd.Series(dtype="int64"),
+        "날짜": pd.Series(dtype="datetime64[ns]"),
+        "유형": pd.Series(dtype="str"),
+        "카테고리": pd.Series(dtype="str"),
+        "금액": pd.Series(dtype="int64"),
+        "메모": pd.Series(dtype="str"),
+    })
+
 @st.cache_data(ttl=30)
 def load_data() -> pd.DataFrame:
     res = supabase.table("budget").select("*").order("날짜").execute()
     if not res.data:
-        return pd.DataFrame(columns=["id", "날짜", "유형", "카테고리", "금액", "메모"])
+        return _empty_df()
     df = pd.DataFrame(res.data)
     df["날짜"] = pd.to_datetime(df["날짜"])
     df["금액"] = df["금액"].astype(int)
@@ -283,20 +293,42 @@ with tab3:
 
         st.markdown(f"**{len(show)}건**")
 
-        for _, row in show.sort_values("날짜str", ascending=False).iterrows():
-            color = "#2f9e44" if row["유형"] == "수입" else "#e03131"
-            icon  = "💚" if row["유형"] == "수입" else "❤️"
-            c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 1])
-            c1.markdown(f"**{row['날짜str']}**")
-            c2.markdown(f"{icon} {row['카테고리']}")
-            c3.markdown(f"<span style='color:{color};font-weight:bold;'>{row['금액표시']}</span>",
-                        unsafe_allow_html=True)
-            c4.markdown(row["메모"] if pd.notna(row["메모"]) and row["메모"] else "—")
-            if c5.button("🗑️", key=f"del_{row['id']}", help="삭제"):
-                delete_row(row["id"])
-                st.rerun()
+        # 날짜 내림차순 정렬 후 날짜별 그룹핑
+        show_sorted = show.sort_values("날짜str", ascending=False)
 
-        st.divider()
+        for date_str, grp in show_sorted.groupby("날짜str", sort=False):
+            # 날짜 헤더 + 해당일 소계
+            day_in  = grp[grp["유형"] == "수입"]["금액"].sum()
+            day_out = grp[grp["유형"] == "지출"]["금액"].sum()
+            badges  = []
+            if day_in  > 0: badges.append(f"<span style='color:#2f9e44'>+{day_in:,}</span>")
+            if day_out > 0: badges.append(f"<span style='color:#e03131'>-{day_out:,}</span>")
+            st.markdown(
+                f"**📅 {date_str}** &nbsp;&nbsp; {'&ensp;'.join(badges)}",
+                unsafe_allow_html=True,
+            )
+
+            for _, row in grp.iterrows():
+                color = "#2f9e44" if row["유형"] == "수입" else "#e03131"
+                icon  = "💚" if row["유형"] == "수입" else "❤️"
+                memo  = row["메모"] if pd.notna(row["메모"]) and row["메모"] else ""
+                memo_str = f" &nbsp;·&nbsp; {memo}" if memo else ""
+
+                col_info, col_del = st.columns([14, 1])
+                with col_info:
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp; {icon} {row['카테고리']} &nbsp;"
+                        f"<span style='color:{color};font-weight:bold;'>{row['금액표시']}원</span>"
+                        f"{memo_str}",
+                        unsafe_allow_html=True,
+                    )
+                with col_del:
+                    if st.button("🗑️", key=f"del_{row['id']}", help="삭제"):
+                        delete_row(row["id"])
+                        st.rerun()
+
+            st.divider()
+
         csv_bytes = df_view[["날짜","유형","카테고리","금액","메모"]].copy()
         csv_bytes["날짜"] = csv_bytes["날짜"].dt.strftime("%Y-%m-%d")
         st.download_button(
