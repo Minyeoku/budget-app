@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from supabase import create_client
 from datetime import date
+import calendar as cal_mod
 
 st.set_page_config(page_title="가계부", page_icon="💰", layout="wide")
 
@@ -132,7 +133,7 @@ m4.metric("💼 잔액", fmt(balance), delta=fmt(balance),
 st.divider()
 
 # ── 탭 ──────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📊 월별 추이", "🥧 카테고리 분석", "📋 내역 목록"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 월별 추이", "🥧 카테고리 분석", "📋 내역 목록", "📅 일별"])
 
 # ── 탭1: 월별 추이 ──────────────────────────────────────────────────
 with tab1:
@@ -337,3 +338,80 @@ with tab3:
             file_name=f"가계부_{sel_year}년_{sel_month_str}.csv",
             mime="text/csv",
         )
+
+# ── 탭4: 일별 달력 ──────────────────────────────────────────────────
+with tab4:
+    df_year_cal = df[df["날짜"].dt.year == sel_year].copy()
+
+    month_tabs_cal = st.tabs([f"{m}월" for m in range(1, 13)])
+
+    for m_idx, m_tab in enumerate(month_tabs_cal):
+        month_num = m_idx + 1
+        with m_tab:
+            df_cal = df_year_cal[df_year_cal["날짜"].dt.month == month_num].copy()
+            df_cal["day"] = df_cal["날짜"].dt.day
+
+            daily_in  = df_cal[df_cal["유형"] == "수입"].groupby("day")["금액"].sum()
+            daily_out = df_cal[df_cal["유형"] == "지출"].groupby("day")["금액"].sum()
+
+            # 요일 헤더
+            hcols = st.columns(7)
+            for i, h in enumerate(["월", "화", "수", "목", "금", "토", "일"]):
+                c = "#e03131" if h == "일" else ("#1971c2" if h == "토" else "#495057")
+                hcols[i].markdown(
+                    f"<div style='text-align:center;font-weight:bold;color:{c};padding:4px'>{h}</div>",
+                    unsafe_allow_html=True,
+                )
+
+            today = date.today()
+            weeks = cal_mod.monthcalendar(sel_year, month_num)
+
+            for week in weeks:
+                wcols = st.columns(7)
+                for d_idx, day in enumerate(week):
+                    with wcols[d_idx]:
+                        if day == 0:
+                            st.markdown("<div style='min-height:76px'></div>", unsafe_allow_html=True)
+                            continue
+
+                        d_in  = int(daily_in.get(day, 0))
+                        d_out = int(daily_out.get(day, 0))
+                        is_today = (sel_year == today.year and month_num == today.month and day == today.day)
+                        is_sun   = d_idx == 6
+                        is_sat   = d_idx == 5
+
+                        day_c  = "#e03131" if is_sun else ("#1971c2" if is_sat else "#212529")
+                        bg     = "#fff9db" if is_today else ("#f8f9fa" if (d_in or d_out) else "#ffffff")
+                        border = "2px solid #f59f00" if is_today else "1px solid #dee2e6"
+                        in_s   = f"<div style='color:#2f9e44;font-size:10px;line-height:1.4'>+{d_in:,}</div>" if d_in else ""
+                        out_s  = f"<div style='color:#e03131;font-size:10px;line-height:1.4'>-{d_out:,}</div>" if d_out else ""
+
+                        st.markdown(
+                            f"<div style='text-align:center;padding:6px 2px;border-radius:8px;"
+                            f"background:{bg};border:{border};min-height:76px;margin-bottom:2px'>"
+                            f"<div style='font-weight:bold;color:{day_c};font-size:15px'>{day}</div>"
+                            f"{in_s}{out_s}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        day_rows = df_cal[df_cal["day"] == day]
+                        if not day_rows.empty:
+                            with st.popover("📋", use_container_width=True):
+                                st.markdown(f"**{sel_year}년 {month_num}월 {day}일**")
+                                if d_in:
+                                    st.markdown(f"💚 수입 합계: **+{d_in:,}원**")
+                                if d_out:
+                                    st.markdown(f"❤️ 지출 합계: **-{d_out:,}원**")
+                                st.divider()
+                                for _, r in day_rows.iterrows():
+                                    icon  = "💚" if r["유형"] == "수입" else "❤️"
+                                    color = "#2f9e44" if r["유형"] == "수입" else "#e03131"
+                                    sign  = "+" if r["유형"] == "수입" else "-"
+                                    memo  = r["메모"] if pd.notna(r["메모"]) and r["메모"] else ""
+                                    memo_str = f" · {memo}" if memo else ""
+                                    st.markdown(
+                                        f"{icon} {r['카테고리']} "
+                                        f"<span style='color:{color};font-weight:bold'>"
+                                        f"{sign}{r['금액']:,}원</span>{memo_str}",
+                                        unsafe_allow_html=True,
+                                    )
