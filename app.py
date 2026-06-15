@@ -4,14 +4,17 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from supabase import create_client
-from datetime import date
-import calendar as cal_mod
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+def today_kst():
+    return datetime.now(ZoneInfo("Asia/Seoul")).date()
 
 st.set_page_config(page_title="가계부", page_icon="💰", layout="wide")
 
 INCOME_CATS  = ["월급", "부수입", "투자수익", "용돈", "기타수입"]
 EXPENSE_CATS = ["식비", "교통", "주거/관리비", "의료/건강", "문화/여가",
-                "쇼핑/의류", "통신", "교육", "저축/보험", "기타지출"]
+                "쇼핑/의류", "통신", "교육", "저축/보험", "술", "기타지출"]
 
 CAT_COLORS = {
     "월급": "#2f9e44", "부수입": "#40c057", "투자수익": "#69db7c",
@@ -19,7 +22,7 @@ CAT_COLORS = {
     "식비": "#e03131", "교통": "#f03e3e", "주거/관리비": "#fa5252",
     "의료/건강": "#ff6b6b", "문화/여가": "#ff8787", "쇼핑/의류": "#ffa8a8",
     "통신": "#ffc9c9", "교육": "#e64980", "저축/보험": "#cc5de8",
-    "기타지출": "#845ef7",
+    "술": "#f76707", "기타지출": "#845ef7",
 }
 
 # ── Supabase 클라이언트 ────────────────────────────────────────────
@@ -72,6 +75,13 @@ def fmt(n):
 # ── 타이틀 ─────────────────────────────────────────────────────────
 st.title("💰 가계부")
 
+# "Press Enter to submit" 힌트 숨김
+st.markdown("""
+<style>
+[data-testid="InputInstructions"] { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # ── 사이드바 ────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("✏️ 내역 추가")
@@ -79,7 +89,7 @@ with st.sidebar:
     cats = INCOME_CATS if 유형 == "수입" else EXPENSE_CATS
 
     with st.form("add_form", clear_on_submit=True):
-        d   = st.date_input("날짜", value=date.today())
+        d   = st.date_input("날짜", value=today_kst())
         cat = st.selectbox("카테고리", cats)
         amt = st.number_input("금액 (원)", min_value=0, step=1000, format="%d")
         memo = st.text_input("메모", placeholder="간단한 설명")
@@ -133,7 +143,7 @@ m4.metric("💼 잔액", fmt(balance), delta=fmt(balance),
 st.divider()
 
 # ── 탭 ──────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📊 월별 추이", "🥧 카테고리 분석", "📋 내역 목록", "📅 일별"])
+tab1, tab2, tab3 = st.tabs(["📊 월별 추이", "🥧 카테고리 분석", "📋 내역 목록"])
 
 # ── 탭1: 월별 추이 ──────────────────────────────────────────────────
 with tab1:
@@ -188,28 +198,23 @@ with tab1:
         ))
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        df_sorted = (
-            df[df["날짜"].dt.year == sel_year].sort_values("날짜").copy()
+        df_daily_out = (
+            df_view[df_view["유형"] == "지출"]
+            .assign(날짜표시=lambda x: x["날짜"].dt.strftime("%Y-%m-%d"))
+            .groupby("날짜표시")["금액"].sum()
+            .reset_index()
+            .sort_values("날짜표시")
         )
-        df_sorted["부호금액"] = df_sorted.apply(
-            lambda r: r["금액"] if r["유형"]=="수입" else -r["금액"], axis=1)
-        df_sorted["누적잔액"]  = df_sorted["부호금액"].cumsum()
-        df_sorted["날짜표시"]  = df_sorted["날짜"].dt.strftime("%Y-%m-%d")
-
-        fig_cum = px.scatter(
-            df_sorted, x="날짜표시", y="누적잔액",
-            title=f"{sel_year}년 누적 잔액 추이",
-            labels={"누적잔액": "누적 잔액 (원)", "날짜표시": "날짜"},
-            color_discrete_sequence=["#1971c2"], height=280,
-        )
-        fig_cum.update_traces(
-            mode="lines+markers",
-            marker=dict(size=8, line=dict(width=1.5, color="white")),
-            line=dict(width=2),
-        )
-        fig_cum.update_layout(plot_bgcolor="#f8f9fa", yaxis_tickformat=",",
-                              xaxis=dict(tickangle=-30, nticks=12))
-        st.plotly_chart(fig_cum, use_container_width=True)
+        if not df_daily_out.empty:
+            fig_daily = px.bar(
+                df_daily_out, x="날짜표시", y="금액",
+                title=f"{period} 일별 지출",
+                labels={"금액": "지출 (원)", "날짜표시": "날짜"},
+                color_discrete_sequence=["#e03131"], height=280,
+            )
+            fig_daily.update_layout(plot_bgcolor="#f8f9fa", yaxis_tickformat=",",
+                                    xaxis=dict(tickangle=-30))
+            st.plotly_chart(fig_daily, use_container_width=True)
 
 # ── 탭2: 카테고리 분석 ─────────────────────────────────────────────
 with tab2:
@@ -339,79 +344,3 @@ with tab3:
             mime="text/csv",
         )
 
-# ── 탭4: 일별 달력 ──────────────────────────────────────────────────
-with tab4:
-    df_year_cal = df[df["날짜"].dt.year == sel_year].copy()
-
-    month_tabs_cal = st.tabs([f"{m}월" for m in range(1, 13)])
-
-    for m_idx, m_tab in enumerate(month_tabs_cal):
-        month_num = m_idx + 1
-        with m_tab:
-            df_cal = df_year_cal[df_year_cal["날짜"].dt.month == month_num].copy()
-            df_cal["day"] = df_cal["날짜"].dt.day
-
-            daily_in  = df_cal[df_cal["유형"] == "수입"].groupby("day")["금액"].sum()
-            daily_out = df_cal[df_cal["유형"] == "지출"].groupby("day")["금액"].sum()
-
-            # 요일 헤더
-            hcols = st.columns(7)
-            for i, h in enumerate(["월", "화", "수", "목", "금", "토", "일"]):
-                c = "#e03131" if h == "일" else ("#1971c2" if h == "토" else "#495057")
-                hcols[i].markdown(
-                    f"<div style='text-align:center;font-weight:bold;color:{c};padding:4px'>{h}</div>",
-                    unsafe_allow_html=True,
-                )
-
-            today = date.today()
-            weeks = cal_mod.monthcalendar(sel_year, month_num)
-
-            for week in weeks:
-                wcols = st.columns(7)
-                for d_idx, day in enumerate(week):
-                    with wcols[d_idx]:
-                        if day == 0:
-                            st.markdown("<div style='min-height:76px'></div>", unsafe_allow_html=True)
-                            continue
-
-                        d_in  = int(daily_in.get(day, 0))
-                        d_out = int(daily_out.get(day, 0))
-                        is_today = (sel_year == today.year and month_num == today.month and day == today.day)
-                        is_sun   = d_idx == 6
-                        is_sat   = d_idx == 5
-
-                        day_c  = "#e03131" if is_sun else ("#1971c2" if is_sat else "#212529")
-                        bg     = "#fff9db" if is_today else ("#f8f9fa" if (d_in or d_out) else "#ffffff")
-                        border = "2px solid #f59f00" if is_today else "1px solid #dee2e6"
-                        in_s   = f"<div style='color:#2f9e44;font-size:10px;line-height:1.4'>+{d_in:,}</div>" if d_in else ""
-                        out_s  = f"<div style='color:#e03131;font-size:10px;line-height:1.4'>-{d_out:,}</div>" if d_out else ""
-
-                        st.markdown(
-                            f"<div style='text-align:center;padding:6px 2px;border-radius:8px;"
-                            f"background:{bg};border:{border};min-height:76px;margin-bottom:2px'>"
-                            f"<div style='font-weight:bold;color:{day_c};font-size:15px'>{day}</div>"
-                            f"{in_s}{out_s}</div>",
-                            unsafe_allow_html=True,
-                        )
-
-                        day_rows = df_cal[df_cal["day"] == day]
-                        if not day_rows.empty:
-                            with st.popover("📋", use_container_width=True):
-                                st.markdown(f"**{sel_year}년 {month_num}월 {day}일**")
-                                if d_in:
-                                    st.markdown(f"💚 수입 합계: **+{d_in:,}원**")
-                                if d_out:
-                                    st.markdown(f"❤️ 지출 합계: **-{d_out:,}원**")
-                                st.divider()
-                                for _, r in day_rows.iterrows():
-                                    icon  = "💚" if r["유형"] == "수입" else "❤️"
-                                    color = "#2f9e44" if r["유형"] == "수입" else "#e03131"
-                                    sign  = "+" if r["유형"] == "수입" else "-"
-                                    memo  = r["메모"] if pd.notna(r["메모"]) and r["메모"] else ""
-                                    memo_str = f" · {memo}" if memo else ""
-                                    st.markdown(
-                                        f"{icon} {r['카테고리']} "
-                                        f"<span style='color:{color};font-weight:bold'>"
-                                        f"{sign}{r['금액']:,}원</span>{memo_str}",
-                                        unsafe_allow_html=True,
-                                    )
